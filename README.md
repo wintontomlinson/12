@@ -115,3 +115,17 @@ Behaviours verified against the live API, each of which shaped the implementatio
 ## License
 
 Personal/educational project. JioSaavn content and trademarks belong to their respective owners; this project is unaffiliated.
+
+## Legacy Flask API
+
+This repository previously held a Python Flask JioSaavn proxy (`app.py`,
+`helpers.py`, `models.py`, `requirements.txt`). Those files are still present but
+are **no longer used** — Sur's backend is the Express + TypeScript API under
+`api/`, written fresh for Node rather than ported.
+
+The original `vercel.json` routed every request to `app.py` via `@vercel/python`.
+It has been replaced by the Node configuration, because the Python routing would
+have prevented the React app from ever being served.
+
+The legacy files can be deleted (or moved to a `legacy/` directory) whenever you
+are ready; nothing in the current app references them.
