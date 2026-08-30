@@ -38,9 +38,10 @@ export function Equalizer({
             isPlaying ? 'bg-accent' : 'bg-white/30',
           )}
           style={{
-            // Floor of 10% keeps the bars visible as a flat baseline when idle
-            // instead of collapsing to nothing.
-            height: `${Math.max(level * 100, 10)}%`,
+            // Floor keeps a flat baseline when idle rather than collapsing to
+            // nothing. At 10% the 3px-wide bars rendered as dots, so the idle
+            // state now reads as short bars.
+            height: `${Math.max(level * 100, 18)}%`,
           }}
         />
       ))}
