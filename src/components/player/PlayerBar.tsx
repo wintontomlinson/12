@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { usePlayerControls } from '@/hooks/usePlayer';
+import { useSwipe } from '@/hooks/useSwipe';
 import {
   selectCurrentTrack,
   selectHasNext,
@@ -66,6 +67,11 @@ export function PlayerBar(): JSX.Element {
   const toggleLyrics = useUiStore((s) => s.toggleLyrics);
   const toggleQueue = useUiStore((s) => s.toggleQueue);
   const toggleFullscreen = useUiStore((s) => s.toggleFullscreen);
+  const setFullscreen = useUiStore((s) => s.setFullscreen);
+
+  // Swipe up anywhere on the bar opens the fullscreen player (requirement L4,
+  // mobile). The distance threshold keeps button taps from registering as swipes.
+  const swipe = useSwipe({ onSwipeUp: () => setFullscreen(true) });
 
   const RepeatGlyph = repeat === 'one' ? RepeatOneIcon : RepeatIcon;
 
@@ -73,6 +79,7 @@ export function PlayerBar(): JSX.Element {
     <footer
       className="z-40 flex h-[72px] shrink-0 items-center gap-3 border-t border-white/10 bg-black px-3 sm:h-[90px] sm:px-4"
       aria-label="Player"
+      {...swipe}
     >
       {/* ── LEFT: artwork, title/artist, like ─────────────────────────── */}
       <div className="flex min-w-0 flex-1 items-center gap-3 sm:w-[30%] sm:flex-none">
@@ -260,7 +267,17 @@ export function PlayerBar(): JSX.Element {
         </button>
       </div>
 
-      {/* Mobile: expand to the fullscreen player (built in Stage 9). */}
+      {/* Mobile: next track, then expand to the fullscreen player. */}
+      <button
+        type="button"
+        onClick={() => next()}
+        disabled={!hasQueue || !hasNext}
+        className="focus-ring shrink-0 rounded p-1 text-white disabled:opacity-40 sm:hidden"
+        aria-label="Next track"
+      >
+        <NextIcon className="h-5 w-5" />
+      </button>
+
       <button
         type="button"
         onClick={toggleFullscreen}

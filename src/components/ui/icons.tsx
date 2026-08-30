@@ -264,3 +264,72 @@ export function CloseIcon(props: IconProps): JSX.Element {
     </Icon>
   );
 }
+
+
+/* ── track rows / menus / panels ────────────────────────────────────────── */
+
+export function EllipsisIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props}>
+      <circle cx="5" cy="12" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
+    </Icon>
+  );
+}
+
+export function QueueAddIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h12M3 11h12M3 16h7" />
+      <path d="M18 9v9M22.5 13.5h-9" transform="translate(-1.5 -1)" />
+    </Icon>
+  );
+}
+
+export function PlayNextIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h11M3 12h11M3 17h6" />
+      <path d="m17 8 4 4-4 4" />
+    </Icon>
+  );
+}
+
+export function TrashIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+    </Icon>
+  );
+}
+
+export function AlbumIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="2.5" />
+    </Icon>
+  );
+}
+
+/** Animated "now playing" bars for the active row in a tracklist. */
+export function PlayingBarsIcon({ className }: { className?: string }): JSX.Element {
+  return (
+    <span className={className} aria-label="Now playing" role="img">
+      <span className="flex h-3.5 items-end justify-center gap-[2px]">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="w-[2px] animate-pulse rounded-full bg-accent"
+            style={{
+              height: `${[60, 100, 45][i]}%`,
+              animationDelay: `${i * 160}ms`,
+              animationDuration: '900ms',
+            }}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}

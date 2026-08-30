@@ -7,9 +7,20 @@ import { cn } from '@/lib/utils';
  * (requirement R8.1). The overlay starts translated fully left and animates to
  * fully right, so the sweep enters and exits cleanly.
  */
-export function Skeleton({ className }: { className?: string }): JSX.Element {
+export function Skeleton({
+  className,
+  style,
+}: {
+  className?: string;
+  /** For continuous values Tailwind cannot express, e.g. ragged line widths. */
+  style?: React.CSSProperties;
+}): JSX.Element {
   return (
-    <div className={cn('relative overflow-hidden bg-surface-raised', className)} aria-hidden="true">
+    <div
+      className={cn('relative overflow-hidden bg-surface-raised', className)}
+      style={style}
+      aria-hidden="true"
+    >
       <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/[0.07] to-transparent" />
     </div>
   );
@@ -58,6 +69,40 @@ export function RecentTileSkeleton(): JSX.Element {
     <div className="flex items-center gap-3 overflow-hidden rounded-md bg-surface-raised">
       <Skeleton className="h-16 w-16 shrink-0 rounded-l-md" />
       <Skeleton className="mr-4 h-4 flex-1 rounded" />
+    </div>
+  );
+}
+
+
+/** Placeholder rows shaped like a tracklist. */
+export function TrackListSkeleton({ rows = 8 }: { rows?: number }): JSX.Element {
+  return (
+    <div className="space-y-1">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="flex items-center gap-3 px-2 py-1.5">
+          <Skeleton className="h-4 w-4 rounded" />
+          <Skeleton className="h-10 w-10 shrink-0 rounded" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-1/3 rounded" />
+            <Skeleton className="h-3 w-1/5 rounded" />
+          </div>
+          <Skeleton className="h-3 w-10 rounded" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Placeholder for a detail-page banner header. */
+export function BannerSkeleton({ round = false }: { round?: boolean }): JSX.Element {
+  return (
+    <div className="mb-6 flex flex-col gap-5 sm:flex-row sm:items-end">
+      <Skeleton className={cn('h-44 w-44 shrink-0', round ? 'rounded-full' : 'rounded-card')} />
+      <div className="flex-1 space-y-4 pb-2">
+        <Skeleton className="h-3 w-16 rounded" />
+        <Skeleton className="h-12 w-2/3 rounded" />
+        <Skeleton className="h-3 w-1/3 rounded" />
+      </div>
     </div>
   );
 }
