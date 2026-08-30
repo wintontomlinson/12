@@ -32,7 +32,19 @@ Two bugs found and fixed during verification:
 
 ## Remaining stages — each pauses for review
 
-- [ ] **Stage 3 — Home** — app shell (sidebar, navbar, routing), carousels, recently played, card hover play, skeletons + error/retry.
+- [x] **Stage 3 — Home** ✅ BUILT, ⛔ AWAITING REVIEW — app shell (sidebar, navbar, routing),
+      carousels, recently played, card hover play, skeletons + error/retry.
+      Browser-verified 26/26: skeletons precede content (0 spinners), all four carousels,
+      click-to-play from cards AND from live search suggestions, card→detail navigation,
+      deep-link survival, retry recovering from a simulated 502, clean console.
+
+      Bug found and fixed: `autocomplete.get` (which backs navbar suggestions) omits
+      `encrypted_media_url` and `duration`, so suggestion songs were unplayable
+      (`downloadUrl: []`). Songs are now lazily resolved via `/songs/:id` at play time
+      rather than enriching every suggestion server-side.
+
+      Interim pages: `/search` (Stage 4), `/album|/playlist|/artist` (Stage 5),
+      `/liked` + `/library` (Stage 8). All fetch real data and can play — not dead ends.
 - [ ] **Stage 4 — Search** — debounced navbar suggestions with out-of-order discard, grouped results page, URL-synced query, empty state.
 - [ ] **Stage 5 — Detail pages** — album/playlist/artist banner + tracklist, play-from-index, context menus.
 - [ ] **Stage 6 — Queue** — queue panel, Add to Queue, Play Next.

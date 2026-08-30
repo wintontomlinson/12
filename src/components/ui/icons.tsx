@@ -191,3 +191,76 @@ export function AlertIcon(props: IconProps): JSX.Element {
     </Icon>
   );
 }
+
+
+/* ── navigation / shell ─────────────────────────────────────────────────── */
+
+export function HomeIcon({ filled = false, ...props }: IconProps & { filled?: boolean }): JSX.Element {
+  return filled ? (
+    <Icon {...props}>
+      <path d="M12 3.2a1 1 0 0 1 .64.23l7 5.83A1 1 0 0 1 20 10v9a1.5 1.5 0 0 1-1.5 1.5H15a1 1 0 0 1-1-1v-4.75a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1V19.5a1 1 0 0 1-1 1H5.5A1.5 1.5 0 0 1 4 19v-9a1 1 0 0 1 .36-.77l7-5.83A1 1 0 0 1 12 3.2Z" />
+    </Icon>
+  ) : (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 10.2 12 4l7.5 6.2V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z" />
+    </Icon>
+  );
+}
+
+export function SearchIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4.5 4.5" />
+    </Icon>
+  );
+}
+
+export function LibraryIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5v14M8.5 5v14" />
+      <path d="m13.2 6.4 4.3-1.2a1 1 0 0 1 1.24.7l3 11.2a1 1 0 0 1-.7 1.23l-4.3 1.15a1 1 0 0 1-1.23-.7l-3-11.15a1 1 0 0 1 .7-1.23Z" />
+    </Icon>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m14 6-6 6 6 6" />
+    </Icon>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m10 6 6 6-6 6" />
+    </Icon>
+  );
+}
+
+export function UserIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props}>
+      <path d="M12 12.6a4.3 4.3 0 1 0 0-8.6 4.3 4.3 0 0 0 0 8.6ZM12 14.4c-3.6 0-6.6 2-6.6 4.4 0 .7.5 1.2 1.2 1.2h10.8c.7 0 1.2-.5 1.2-1.2 0-2.4-3-4.4-6.6-4.4Z" />
+    </Icon>
+  );
+}
+
+export function MenuIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </Icon>
+  );
+}
+
+export function CloseIcon(props: IconProps): JSX.Element {
+  return (
+    <Icon {...props} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </Icon>
+  );
+}
