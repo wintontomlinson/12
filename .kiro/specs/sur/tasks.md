@@ -45,10 +45,35 @@ Two bugs found and fixed during verification:
 
       Interim pages: `/search` (Stage 4), `/album|/playlist|/artist` (Stage 5),
       `/liked` + `/library` (Stage 8). All fetch real data and can play — not dead ends.
-- [ ] **Stage 4 — Search** — debounced navbar suggestions with out-of-order discard, grouped results page, URL-synced query, empty state.
-- [ ] **Stage 5 — Detail pages** — album/playlist/artist banner + tracklist, play-from-index, context menus.
-- [ ] **Stage 6 — Queue** — queue panel, Add to Queue, Play Next.
-- [ ] **Stage 7 — Lyrics** — static side panel, `<br>` rendering, neutral empty state.
-- [ ] **Stage 8 — Liked Songs** — like toggles, auto collection, sidebar entry.
-- [ ] **Stage 9 — Mobile & polish** — collapsible sidebar, swipe-up fullscreen player, responsive passes.
-- [ ] **Stage 10 — Deployment checklist** — local run steps, Vercel dashboard config, known limitations (cold starts, function timeouts, upstream instability).
+- [x] **Stage 4 — Search** ✅ — debounced navbar suggestions with out-of-order discard, grouped
+      results page, URL-synced query + type filter, empty state distinct from error.
+- [x] **Stage 5 — Detail pages** ✅ — album/playlist/artist banner + tracklist, play-from-index,
+      context menus. Album `header_desc` suppressed because upstream restates the metadata.
+- [x] **Stage 6 — Queue** ✅ — queue panel (now playing + next up), Add to Queue, Play Next,
+      remove, clear, jump-to-track.
+- [x] **Stage 7 — Lyrics** ✅ — static side panel, newline rendering, neutral empty state,
+      never gated on the unreliable `hasLyrics` flag.
+- [x] **Stage 8 — Liked Songs** ✅ — like toggles in rows/player/fullscreen, auto collection,
+      Your Library with history.
+- [x] **Stage 9 — Mobile & polish** ✅ — collapsible sidebar, swipe-up/down fullscreen player
+      (hand-rolled pointer-event swipe, no gesture dependency), Escape to dismiss.
+- [x] **Stage 10 — Deployment checklist** ✅ — `DEPLOYMENT.md`: local run, Vercel dashboard
+      config, post-deploy verification, known limitations, troubleshooting table.
+
+Browser-verified 27/27 across stages 4-9: URL-synced search + filters, empty-vs-error states,
+play from results, real lyrics rendered with no timing markup, shared right rail (opening queue
+closes lyrics), album banner + 10-row tracklist, context-menu Add to Queue (20 -> 21), like
+persistence, Liked Songs + Library, artist page with circular art and four sections, 404 route,
+mobile fullscreen player with Escape dismissal, playback unaffected by the overlay, clean console.
+
+Two items came out of verification: the search filter row gained `role="group"` semantics, and
+`Skeleton` now takes a `style` prop instead of a props-spread hack.
+
+## Intentionally not built
+
+- **Recommendations / radio autoplay** (`song.getReco`) — never in the requirements; the queue
+  simply ends. The obvious next feature if endless playback is wanted.
+- **Colour-sampled banner gradients** — would need a canvas read of a cross-origin image plus a
+  contrast check to keep white text legible. A fixed tint gets most of the effect, none of the risk.
+- **Legacy Flask files** (`app.py`, `helpers.py`, `models.py`, `requirements.txt`) left in place
+  rather than deleted without approval. Unused by the app.

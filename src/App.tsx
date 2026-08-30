@@ -1,15 +1,13 @@
 import { Route, Routes } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { usePlayerEngine } from '@/hooks/usePlayer';
+import { Artist } from '@/pages/Artist';
+import { Collection } from '@/pages/Collection';
 import { Home } from '@/pages/Home';
-import {
-  ArtistPage,
-  CollectionPage,
-  LibraryPage,
-  LikedSongsPage,
-  NotFoundPage,
-  SearchPage,
-} from '@/pages/StagePlaceholder';
+import { Library } from '@/pages/Library';
+import { LikedSongs } from '@/pages/LikedSongs';
+import { NotFound } from '@/pages/NotFound';
+import { Search } from '@/pages/Search';
 
 /**
  * Application root.
@@ -18,8 +16,8 @@ import {
  * single `<audio>` element; mounting it inside a routed page would tear down and
  * restart playback on every navigation.
  *
- * Routes are nested under `AppShell` so the sidebar, top bar and player bar
- * persist across navigation and only the outlet swaps.
+ * Routes are nested under `AppShell` so the sidebar, top bar, side panels and
+ * player bar persist across navigation and only the outlet swaps.
  */
 export function App(): JSX.Element {
   usePlayerEngine();
@@ -28,13 +26,15 @@ export function App(): JSX.Element {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<Home />} />
-        <Route path="/search" element={<SearchPage />} />
-        <Route path="/album/:id" element={<CollectionPage kind="album" />} />
-        <Route path="/playlist/:id" element={<CollectionPage kind="playlist" />} />
-        <Route path="/artist/:id" element={<ArtistPage />} />
-        <Route path="/liked" element={<LikedSongsPage />} />
-        <Route path="/library" element={<LibraryPage />} />
-        <Route path="*" element={<NotFoundPage />} />
+        <Route path="/search" element={<Search />} />
+        {/* Album and playlist share one component; the payloads differ only in
+            a couple of fields and the page layout is identical. */}
+        <Route path="/album/:id" element={<Collection kind="album" />} />
+        <Route path="/playlist/:id" element={<Collection kind="playlist" />} />
+        <Route path="/artist/:id" element={<Artist />} />
+        <Route path="/liked" element={<LikedSongs />} />
+        <Route path="/library" element={<Library />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );
