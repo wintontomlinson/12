@@ -68,7 +68,7 @@ No secrets are required — the upstream API is unauthenticated and the app boot
 | --- | --- | --- |
 | `API_PORT` | `3001` | Local dev API port. Ignored on Vercel |
 | `SAAVN_API_BASE` | `https://www.jiosaavn.com/api.php` | Upstream endpoint; override to point at a mock |
-| `UPSTREAM_TIMEOUT_MS` | `10000` | Per-request upstream budget, kept below the function `maxDuration` |
+| `UPSTREAM_TIMEOUT_MS` | `8000` | Per-request upstream budget, kept below Vercel's 10s default function timeout |
 | `CORS_ORIGIN` | `*` | Only relevant in dev, where Vite and Express are separate origins |
 
 ## API
