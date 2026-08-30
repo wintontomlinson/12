@@ -19,11 +19,14 @@ export const env = {
   saavnApiBase: process.env.SAAVN_API_BASE ?? 'https://www.jiosaavn.com/api.php',
 
   /**
-   * Hard ceiling on any single upstream call. Deliberately well under Vercel's
-   * function timeout so we fail with a clean 504 instead of being killed by the
-   * platform mid-response (requirement N5.2).
+   * Hard ceiling on any single upstream call.
+   *
+   * Deliberately below Vercel's DEFAULT function timeout of 10s, so a slow
+   * upstream produces a clean 504 from us rather than the platform killing the
+   * invocation mid-response (requirement N5.2). `vercel.json` no longer pins
+   * `maxDuration`, so 10s is the figure to stay under.
    */
-  upstreamTimeoutMs: num(process.env.UPSTREAM_TIMEOUT_MS, 10_000),
+  upstreamTimeoutMs: num(process.env.UPSTREAM_TIMEOUT_MS, 8_000),
 
   /**
    * CORS allowlist for local dev, where Vite (5173) and Express (3001) are
