@@ -69,7 +69,20 @@ function extractUpstreamFailure(payload: unknown): string | null {
  *   body (502), or an upstream failure envelope (502).
  */
 export async function call<T>(callName: string, params: UpstreamParams = {}): Promise<T> {
-  const url = buildUrl(callName, params);
+  /**
+   * Guarded: `new URL()` inside `buildUrl` throws synchronously on a malformed
+   * base, and being outside a try/catch made that surface as an opaque
+   * `500 INTERNAL` rather than a diagnosable error.
+   */
+  let url: string;
+  try {
+    url = buildUrl(callName, params);
+  } catch (cause) {
+    throw ApiError.internal(
+      `Could not build the upstream URL for "${callName}" from base ` +
+        `"${env.saavnApiBase}": ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
 
   // Bounds the request so a hung upstream cannot occupy the serverless
   // function until the platform kills it (requirement N5.2).
@@ -89,18 +102,39 @@ export async function call<T>(callName: string, params: UpstreamParams = {}): Pr
     }
     const detail = cause instanceof Error ? cause.message : 'unknown transport error';
     throw ApiError.upstream(`Upstream call "${callName}" failed: ${detail}`);
-  } finally {
-    clearTimeout(timer);
   }
 
   if (!response.ok) {
+    clearTimeout(timer);
     throw ApiError.upstream(`Upstream call "${callName}" returned HTTP ${response.status}`);
   }
 
-  // Read as text first: the upstream occasionally answers with an HTML error
-  // page under a JSON content-type, and `response.json()` would throw a
-  // context-free SyntaxError.
-  const raw = await response.text();
+  /**
+   * Read as text first: the upstream occasionally answers with an HTML error
+   * page under a JSON content-type, and `response.json()` would throw a
+   * context-free SyntaxError.
+   *
+   * Guarded and with the timer still armed, because `fetch` resolves as soon as
+   * the HEADERS arrive — the body is still streaming. An abort or a socket reset
+   * during that read throws here, outside the fetch's own catch, which would
+   * otherwise escape as a raw `500 INTERNAL`.
+   */
+  let raw: string;
+  try {
+    raw = await response.text();
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === 'AbortError') {
+      throw ApiError.timeout(
+        `Upstream call "${callName}" exceeded ${env.upstreamTimeoutMs}ms while reading the response body`,
+      );
+    }
+    throw ApiError.upstream(
+      `Upstream call "${callName}" failed while reading the response body: ` +
+        `${cause instanceof Error ? cause.message : 'unknown error'}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 
   let payload: unknown;
   try {

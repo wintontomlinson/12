@@ -23,6 +23,15 @@ export interface ApiFailure {
   error: {
     code: ApiErrorCode;
     message: string;
+    /**
+     * Exception name and message for unexpected (`INTERNAL`) failures.
+     *
+     * Included in production deliberately. This API holds no secrets — the
+     * upstream is public and unauthenticated — and an opaque "An unexpected
+     * error occurred" made a live outage undiagnosable without platform log
+     * access. Stack traces are still withheld.
+     */
+    detail?: string;
   };
 }
 
