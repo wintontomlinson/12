@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.vercel/
+.env
+.env.local
+*.local
+
+# tsc --build incremental state
+node_modules/.tmp/
+*.tsbuildinfo
+
+.DS_Store
+*.log
+npm-debug.log*
+
+# scratch verification scripts
+.verify-*.ts
+.probe-*.json
+
+# local dev artifacts (screenshots, traces) - not source
+.kiro/artifacts/
+.shots.*
