@@ -42,14 +42,25 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, next) => {
     return;
   }
 
-  const detail = error instanceof Error ? error.message : String(error);
+  const detail =
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
   console.error('[sur] unhandled error:', error);
 
+  /**
+   * `detail` is returned even in production.
+   *
+   * A bare "An unexpected error occurred" left a live 500 impossible to diagnose
+   * without platform log access, which turned a one-line bug into several rounds
+   * of guesswork. There are no secrets to leak here: the upstream API is public
+   * and unauthenticated. Stack traces are still withheld.
+   */
   const body: ApiFailure = {
     success: false,
     error: {
       code: 'INTERNAL',
       message: isProduction ? 'An unexpected error occurred' : detail,
+      detail,
     },
   };
   res.status(500).json(body);
