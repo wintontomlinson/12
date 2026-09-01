@@ -54,6 +54,12 @@ let analyser: AnalyserNode | null = null;
 let analyserBuffer: Uint8Array | null = null;
 
 /**
+ * Cached AudioContext. MUST be a single stable instance — see `getAudioContext`
+ * for why resolving it per-call caused silent playback.
+ */
+let audioCtx: AudioContext | null = null;
+
+/**
  * Elements already wired into the audio graph.
  *
  * `createMediaElementSource` throws on a second call for the same element, and
@@ -64,6 +70,24 @@ const bridgedElements = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNod
 
 /** Once the visualiser is known to be unavailable, stop retrying every track. */
 let visualiserDisabled = false;
+
+/**
+ * iOS deliberately never gets the Web Audio bridge.
+ *
+ * On iOS Safari, routing an HTML5 `<audio>` element through
+ * `createMediaElementSource` frequently produces NO OUTPUT AT ALL — and it does
+ * so without throwing, so the safety-net fallback cannot detect it. Playback is
+ * the product; the equalizer is decoration. On iOS the bars sit idle and audio
+ * plays natively, which is the correct trade.
+ *
+ * iPadOS reports itself as "Macintosh", so touch support is used to catch it.
+ */
+function isIosLike(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  return /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1;
+}
 
 /**
  * Track whose persisted position has already been restored.
@@ -151,14 +175,32 @@ function ensureHtml5AudioPoolCors(): void {
   }
 }
 
-/** The shared AudioContext. Reuses Howler's so we never create a second one. */
+/**
+ * The shared AudioContext, resolved once and CACHED.
+ *
+ * Caching is load-bearing, not an optimisation. This used to resolve on every
+ * call, returning `Howler.ctx` when it existed and otherwise minting a fresh
+ * context. If the first call happened before Howler initialised its context, the
+ * AnalyserNode ended up on our context while a later `createMediaElementSource`
+ * used Howler's. Connecting nodes across two AudioContexts throws
+ * `InvalidAccessError` — and because the element had ALREADY been rerouted into
+ * the graph by then, the audio had nowhere to go and playback went silent.
+ */
 function getAudioContext(): AudioContext | null {
+  if (audioCtx) return audioCtx;
+
   const internals = Howler as unknown as HowlerInternals;
-  if (internals.ctx) return internals.ctx;
+  if (internals.ctx) {
+    audioCtx = internals.ctx;
+    return audioCtx;
+  }
 
   try {
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    return Ctor ? new Ctor() : null;
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    audioCtx = Ctor ? new Ctor() : null;
+    return audioCtx;
   } catch {
     return null;
   }
@@ -175,40 +217,73 @@ function getAudioContext(): AudioContext | null {
 function bridgeToAnalyser(element: HTMLAudioElement): void {
   if (visualiserDisabled) return;
 
+  // See `isIosLike`: bridging there can silence playback with no error to catch.
+  if (isIosLike()) {
+    visualiserDisabled = true;
+    return;
+  }
+
   /**
    * Skip THIS track, but do not disable the visualiser permanently.
    *
    * A single unconfigured element (e.g. Howler minted one outside the pool)
-   * should cost one track's bars, not the whole session's. Only genuine
-   * unavailability — no AudioContext, or a thrown graph error — is terminal.
+   * should cost one track's bars, not the whole session's.
    */
   if (element.crossOrigin !== 'anonymous') return;
 
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) {
+  const ctx = getAudioContext();
+  if (!ctx) {
+    visualiserDisabled = true;
+    return;
+  }
+
+  /**
+   * STEP 1 — obtain the source node.
+   *
+   * Isolated in its own try/catch because it is the point of no return:
+   * `createMediaElementSource` permanently reroutes the element's audio away
+   * from the speakers and into the graph. If it THROWS, the element is untouched
+   * and still audible, so bailing out here is safe.
+   */
+  let source = bridgedElements.get(element);
+  if (!source) {
+    try {
+      source = ctx.createMediaElementSource(element);
+      bridgedElements.set(element, source);
+    } catch {
+      // Element never entered the graph — it keeps playing natively.
       visualiserDisabled = true;
       return;
     }
+  }
 
+  /**
+   * STEP 2 — wire it to an output.
+   *
+   * From here the element is audible ONLY via `source`, so this MUST terminate
+   * at the destination. Any failure falls back to connecting straight to output:
+   * a dead visualiser is a cosmetic bug, silent playback is a broken app.
+   */
+  try {
     if (!analyser) {
-      analyser = ctx.createAnalyser();
+      const node = ctx.createAnalyser();
       // 64 bins is plenty for ~20 bars and keeps the per-frame copy cheap.
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = 0.8;
-      analyserBuffer = new Uint8Array(analyser.frequencyBinCount);
-      analyser.connect(ctx.destination);
-    }
+      node.fftSize = 128;
+      node.smoothingTimeConstant = 0.8;
+      node.connect(ctx.destination);
 
-    // Reuse the existing source when Howler recycles an element; calling
-    // createMediaElementSource twice on one element throws InvalidStateError.
-    let source = bridgedElements.get(element);
-    if (!source) {
-      source = ctx.createMediaElementSource(element);
-      bridgedElements.set(element, source);
+      analyser = node;
+      analyserBuffer = new Uint8Array(node.frequencyBinCount);
     }
     source.connect(analyser);
   } catch {
+    try {
+      // Safety net: keep the audio audible even though analysis failed.
+      source.connect(ctx.destination);
+    } catch {
+      // Nothing further we can do; surfaced below rather than silently swallowed.
+      console.error('[sur] audio graph could not reach the output device');
+    }
     visualiserDisabled = true;
   }
 }
@@ -231,10 +306,28 @@ function teardownHowl(): void {
   loadedTrackId = null;
 }
 
-/** Highest-quality playable URL for a track, or null when none decrypted. */
-function resolveStreamUrl(song: Song): string | null {
-  if (song.downloadUrl.length === 0) return null;
-  return song.downloadUrl[song.downloadUrl.length - 1]?.url ?? null;
+/**
+ * Playable URL for a track, `stepsDown` notches below the highest quality.
+ *
+ * `downloadUrl` is ordered ascending, so index `length - 1` is the best
+ * available. All five bitrate URLs are synthesised from ONE decrypted URL by
+ * filename substitution, so their existence is an assumption rather than a
+ * guarantee — `stepsDown` lets the caller walk down to a smaller file when a
+ * higher one fails to load.
+ */
+function resolveStreamUrl(song: Song, stepsDown = 0): string | null {
+  const links = song.downloadUrl;
+  if (links.length === 0) return null;
+
+  const index = links.length - 1 - stepsDown;
+  if (index < 0) return null;
+  return links[index]?.url ?? null;
+}
+
+/** How many lower-quality variants remain below the current one. */
+function remainingFallbacks(song: Song | null, stepsDown: number): number {
+  if (!song) return 0;
+  return Math.max(song.downloadUrl.length - 1 - stepsDown, 0);
 }
 
 /* ------------------------------------------------------------------ *
@@ -250,8 +343,21 @@ export function usePlayerEngine(): void {
   const recordPlay = useLibraryStore((s) => s.recordPlay);
   const frameRef = useRef<number | null>(null);
 
+  /**
+   * How many quality notches below the best we are currently attempting.
+   *
+   * Bumped by `loaderror` so a track whose top-bitrate URL is unavailable
+   * downgrades and retries instead of failing outright. Reset per track below.
+   */
+  const [qualityStepsDown, setQualityStepsDown] = useState(0);
+
   const trackId = currentTrack?.id ?? null;
-  const streamUrl = currentTrack ? resolveStreamUrl(currentTrack) : null;
+  const streamUrl = currentTrack ? resolveStreamUrl(currentTrack, qualityStepsDown) : null;
+
+  // A new track always starts at the best available quality.
+  useEffect(() => {
+    setQualityStepsDown(0);
+  }, [trackId]);
 
   /* ── load / unload on track change ───────────────────────────────────── */
   useEffect(() => {
@@ -359,6 +465,25 @@ export function usePlayerEngine(): void {
     instance.on('loaderror', () => {
       if (howl !== instance) return;
       const latest = usePlayerStore.getState();
+
+      /**
+       * Try a lower bitrate before giving up.
+       *
+       * The five quality URLs are synthesised by filename substitution, so a
+       * higher one can 404 or be unavailable on a given network while a smaller
+       * one plays fine. Previously any load failure ended playback with an error
+       * and silence; now it walks down the ladder first.
+       */
+      if (remainingFallbacks(currentTrack, qualityStepsDown) > 0) {
+        console.warn(
+          `[sur] "${currentTrack.title}" failed to load at ` +
+            `${currentTrack.downloadUrl[currentTrack.downloadUrl.length - 1 - qualityStepsDown]?.quality}; ` +
+            'retrying at a lower bitrate',
+        );
+        setQualityStepsDown((steps) => steps + 1);
+        return;
+      }
+
       latest.setStatus('error', 'Could not load this track. It may be unavailable.');
       // Deliberately do NOT auto-skip: during an outage that would burn through
       // the whole queue in seconds.
@@ -379,7 +504,8 @@ export function usePlayerEngine(): void {
     };
     // `volume`/`isMuted` are intentionally excluded: they are applied by the
     // effect below, and including them here would reload the track on every
-    // volume nudge.
+    // volume nudge. `streamUrl` covers `qualityStepsDown`, so a downgrade
+    // re-runs this effect and reloads at the lower bitrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackId, streamUrl, recordPlay]);
 
