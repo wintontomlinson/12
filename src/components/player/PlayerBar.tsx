@@ -11,6 +11,7 @@ import { useUiStore } from '@/store/useUiStore';
 import { cn } from '@/lib/utils';
 import { Equalizer } from './Equalizer';
 import { MarqueeText } from './MarqueeText';
+import { QualityControl } from './QualityControl';
 import { SeekBar } from './SeekBar';
 import { VolumeControl } from './VolumeControl';
 import {
@@ -229,6 +230,8 @@ export function PlayerBar(): JSX.Element {
 
         <Equalizer barCount={4} />
 
+        <QualityControl />
+
         <button
           type="button"
           onClick={toggleLyrics}
@@ -267,17 +270,14 @@ export function PlayerBar(): JSX.Element {
         </button>
       </div>
 
-      {/* Mobile: next track, then expand to the fullscreen player. */}
-      <button
-        type="button"
-        onClick={() => next()}
-        disabled={!hasQueue || !hasNext}
-        className="focus-ring shrink-0 rounded p-1 text-white disabled:opacity-40 sm:hidden"
-        aria-label="Next track"
-      >
-        <NextIcon className="h-5 w-5" />
-      </button>
+      {/*
+        Mobile: expand to the fullscreen player.
 
+        There is deliberately no second "Next" button here. The centre transport's
+        next control is already visible at every breakpoint, so adding one gave
+        mobile two identical buttons — and two controls sharing one accessible
+        name, which is ambiguous for screen readers.
+      */}
       <button
         type="button"
         onClick={toggleFullscreen}

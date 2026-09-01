@@ -1,10 +1,11 @@
 import { Howl, Howler } from 'howler';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Song } from '@shared/types';
+import type { AudioQuality, DownloadLink, Song } from '@shared/types';
 import {
   RESTART_THRESHOLD_SECONDS,
   selectCurrentTrack,
   usePlayerStore,
+  type QualityPreference,
 } from '@/store/usePlayerStore';
 import { useLibraryStore } from '@/store/useLibraryStore';
 import { clamp } from '@/lib/utils';
@@ -102,6 +103,25 @@ let isScrubbing = false;
 
 let poolPrimed = false;
 
+/**
+ * Position to seek to once the next load completes.
+ *
+ * Set when we reload a track at a different bitrate, so an adaptive downgrade
+ * resumes where the listener was instead of restarting the song.
+ */
+let pendingSeekTo: number | null = null;
+
+/** Detaches the current stall listeners. Reset on every load. */
+let detachStallWatch: (() => void) | null = null;
+
+/**
+ * Track already written to listening history.
+ *
+ * Guards a synchronous localStorage write from running on every `play` event,
+ * which on a rebuffering connection fires continuously.
+ */
+let recordedPlayForTrackId: string | null = null;
+
 /* ------------------------------------------------------------------ *
  * Howler internals we have to reach into
  * ------------------------------------------------------------------ */
@@ -115,6 +135,32 @@ interface HowlerInternals {
   html5PoolSize?: number;
   ctx?: AudioContext;
   usingWebAudio?: boolean;
+  /** Which media event Howler treats as "loaded". See `configureHowlerForStreaming`. */
+  _canPlayEvent?: string;
+}
+
+/**
+ * Makes Howler treat `canplay` — not `canplaythrough` — as loaded.
+ *
+ * This is the single biggest cause of "the song takes forever / keeps cutting
+ * out" on a slow connection.
+ *
+ * Howler defaults `_canPlayEvent` to `canplaythrough`, which the browser fires
+ * only once it believes it can play the ENTIRE file without stopping. Our tracks
+ * are 8–15 MB, so at ~28 kB/s that estimate is minutes away — and because
+ * playback is started from Howler's `load` handler, nothing plays until then.
+ * Measured directly: at 28 kB/s the track never started at all.
+ *
+ * `canplay` fires as soon as there is enough buffered to begin, which is how
+ * streaming is supposed to work: start now, keep filling the buffer while
+ * playing. The stall watcher then handles the case where the connection genuinely
+ * cannot sustain the chosen bitrate.
+ */
+function configureHowlerForStreaming(): void {
+  const internals = Howler as unknown as HowlerInternals;
+  if (internals._canPlayEvent === 'canplaythrough') {
+    internals._canPlayEvent = 'canplay';
+  }
 }
 
 /** The `<audio>` element backing a Howl in html5 mode. */
@@ -295,6 +341,9 @@ function resumeAudioContext(): void {
 }
 
 function teardownHowl(): void {
+  detachStallWatch?.();
+  detachStallWatch = null;
+
   if (!howl) return;
   try {
     howl.off();
@@ -307,27 +356,115 @@ function teardownHowl(): void {
 }
 
 /**
- * Playable URL for a track, `stepsDown` notches below the highest quality.
+ * Watches for rebuffering and reports when the stream cannot keep up.
  *
- * `downloadUrl` is ordered ascending, so index `length - 1` is the best
- * available. All five bitrate URLs are synthesised from ONE decrypted URL by
- * filename substitution, so their existence is an assumption rather than a
- * guarantee — `stepsDown` lets the caller walk down to a smaller file when a
- * higher one fails to load.
+ * `waiting` fires whenever playback halts for data. One is unremarkable — it
+ * happens after a seek, or on a brief network dip. Repeated ones inside a short
+ * window mean the bitrate is genuinely too high for the connection, which is the
+ * signal to downgrade.
+ *
+ * Listeners are attached to the pooled element and MUST be removed on teardown,
+ * because Howler recycles elements and they would otherwise accumulate.
  */
-function resolveStreamUrl(song: Song, stepsDown = 0): string | null {
-  const links = song.downloadUrl;
-  if (links.length === 0) return null;
+function watchForStalls(element: HTMLAudioElement, onStalling: () => void): () => void {
+  const STALL_THRESHOLD = 2;
+  const WINDOW_MS = 20_000;
 
-  const index = links.length - 1 - stepsDown;
-  if (index < 0) return null;
-  return links[index]?.url ?? null;
+  let timestamps: number[] = [];
+
+  const onWaiting = (): void => {
+    // Ignore stalls before playback has really begun; initial buffering is not
+    // evidence of a sustained bandwidth problem.
+    if (element.currentTime < 1.5) return;
+
+    const now = Date.now();
+    timestamps = timestamps.filter((t) => now - t < WINDOW_MS);
+    timestamps.push(now);
+
+    if (timestamps.length >= STALL_THRESHOLD) {
+      timestamps = [];
+      onStalling();
+    }
+  };
+
+  element.addEventListener('waiting', onWaiting);
+  return () => element.removeEventListener('waiting', onWaiting);
 }
 
-/** How many lower-quality variants remain below the current one. */
-function remainingFallbacks(song: Song | null, stepsDown: number): number {
-  if (!song) return 0;
-  return Math.max(song.downloadUrl.length - 1 - stepsDown, 0);
+/* ------------------------------------------------------------------ *
+ * Quality selection
+ * ------------------------------------------------------------------ */
+
+interface NetworkInformation {
+  effectiveType?: 'slow-2g' | '2g' | '3g' | '4g';
+  downlink?: number;
+  saveData?: boolean;
+}
+
+/**
+ * Best starting quality for `auto`, estimated from the connection.
+ *
+ * NOT the highest available. A 320kbps track measures 8–15 MB, and always
+ * choosing it is what makes playback stutter on anything short of a fast
+ * connection — the browser cannot keep the buffer ahead of the playhead. 160kbps
+ * is roughly half the bytes and the safe default; 320 is only chosen when the
+ * connection is measurably fast.
+ *
+ * The Network Information API is Chromium-only, so absence is normal and simply
+ * means we stay on the safe default rather than gambling on 320.
+ */
+function autoQuality(): AudioQuality {
+  const connection = (navigator as Navigator & { connection?: NetworkInformation }).connection;
+
+  if (!connection) return '160kbps';
+  if (connection.saveData) return '96kbps';
+
+  switch (connection.effectiveType) {
+    case 'slow-2g':
+    case '2g':
+      return '96kbps';
+    case '3g':
+      return '160kbps';
+    default:
+      break;
+  }
+
+  // `downlink` is a rounded Mbps estimate. 5 Mbps comfortably sustains 320kbps.
+  return typeof connection.downlink === 'number' && connection.downlink >= 5
+    ? '320kbps'
+    : '160kbps';
+}
+
+/** Index into `downloadUrl` (ascending) for a requested quality. */
+function baseQualityIndex(links: DownloadLink[], preference: QualityPreference): number {
+  if (links.length === 0) return -1;
+
+  const target = preference === 'auto' ? autoQuality() : preference;
+  const exact = links.findIndex((link) => link.quality === target);
+  if (exact >= 0) return exact;
+
+  // Requested bitrate not offered for this track — take the best below it.
+  return links.length - 1;
+}
+
+/**
+ * Resolves the URL to stream, applying the preference and any downgrades.
+ *
+ * `stepsDown` is applied on top of the preference so a stalling or failing
+ * stream can walk down the ladder without discarding what the listener asked for.
+ */
+function resolveStream(
+  song: Song,
+  preference: QualityPreference,
+  stepsDown: number,
+): { url: string; quality: AudioQuality; index: number } | null {
+  const links = song.downloadUrl;
+  const base = baseQualityIndex(links, preference);
+  if (base < 0) return null;
+
+  const index = Math.max(base - stepsDown, 0);
+  const link = links[index];
+  return link ? { url: link.url, quality: link.quality, index } : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -343,21 +480,32 @@ export function usePlayerEngine(): void {
   const recordPlay = useLibraryStore((s) => s.recordPlay);
   const frameRef = useRef<number | null>(null);
 
+  const qualityPreference = usePlayerStore((s) => s.qualityPreference);
+  const reportQuality = usePlayerStore((s) => s.reportQuality);
+
   /**
-   * How many quality notches below the best we are currently attempting.
+   * How many quality notches below the requested one we are currently using.
    *
-   * Bumped by `loaderror` so a track whose top-bitrate URL is unavailable
-   * downgrades and retries instead of failing outright. Reset per track below.
+   * Bumped by `loaderror` (URL unavailable) and by the stall watcher (bitrate too
+   * high for the connection). Reset per track and whenever the preference changes.
    */
   const [qualityStepsDown, setQualityStepsDown] = useState(0);
 
   const trackId = currentTrack?.id ?? null;
-  const streamUrl = currentTrack ? resolveStreamUrl(currentTrack, qualityStepsDown) : null;
+  const stream = currentTrack
+    ? resolveStream(currentTrack, qualityPreference, qualityStepsDown)
+    : null;
+  const streamUrl = stream?.url ?? null;
 
-  // A new track always starts at the best available quality.
+  // A new track, or a newly chosen preference, starts without any downgrade.
   useEffect(() => {
     setQualityStepsDown(0);
-  }, [trackId]);
+  }, [trackId, qualityPreference]);
+
+  // Surface what is actually streaming so the UI can show it honestly.
+  useEffect(() => {
+    reportQuality(stream?.quality ?? null, qualityStepsDown > 0);
+  }, [stream?.quality, qualityStepsDown, reportQuality]);
 
   /* ── load / unload on track change ───────────────────────────────────── */
   useEffect(() => {
@@ -381,9 +529,11 @@ export function usePlayerEngine(): void {
     }
 
     teardownHowl();
-    // Must run before `new Howl()`: the element's src is assigned synchronously
-    // inside the constructor, so crossOrigin has to already be set.
+    // Both must run before `new Howl()`: the element's src is assigned
+    // synchronously inside the constructor, and the load-event choice is read
+    // when its listeners are attached there.
     ensureHtml5AudioPoolCors();
+    configureHowlerForStreaming();
 
     store.setStatus('loading');
 
@@ -422,7 +572,12 @@ export function usePlayerEngine(): void {
        * a pre-seek value — an infinite seek/play feedback loop (observed as
        * thousands of `seeking/seeked/playing` events at a frozen position).
        */
-      if (
+      if (pendingSeekTo !== null) {
+        // Reloaded at a different bitrate: continue from where playback was.
+        const target = pendingSeekTo;
+        pendingSeekTo = null;
+        if (target > 0 && target < instance.duration()) instance.seek(target);
+      } else if (
         restoredForTrackId !== trackId &&
         latest.position > 0 &&
         latest.position < instance.duration()
@@ -431,7 +586,15 @@ export function usePlayerEngine(): void {
       }
       restoredForTrackId = trackId;
 
-      if (latest.isPlaying) {
+      /**
+       * `!instance.playing()` is essential, not belt-and-braces.
+       *
+       * Since `load` is now bound to `canplay`, it fires REPEATEDLY on a slow
+       * connection — every time the buffer recovers and readyState climbs back to
+       * HAVE_FUTURE_DATA. Calling `play()` unconditionally on each one restarted
+       * the play pipeline dozens of times a second and froze the main thread.
+       */
+      if (latest.isPlaying && !instance.playing()) {
         resumeAudioContext();
         instance.play();
       }
@@ -442,10 +605,48 @@ export function usePlayerEngine(): void {
       resumeAudioContext();
 
       const element = getMediaElement(instance);
-      if (element) bridgeToAnalyser(element);
+      if (element) {
+        bridgeToAnalyser(element);
+
+        // Attach once per load; teardown removes it before the element is reused.
+        if (!detachStallWatch) {
+          detachStallWatch = watchForStalls(element, () => {
+            const song = usePlayerStore.getState().queue[usePlayerStore.getState().queueIndex];
+            if (!song) return;
+
+            const current = resolveStream(song, qualityPreference, qualityStepsDown);
+            const lower = resolveStream(song, qualityPreference, qualityStepsDown + 1);
+
+            // Already at the bottom — nothing left to trade away.
+            if (!lower || !current || lower.index === current.index) return;
+
+            console.warn(
+              `[sur] repeated rebuffering at ${current.quality}; ` +
+                `switching to ${lower.quality} to keep playback smooth`,
+            );
+
+            // Resume where the listener is, rather than restarting the track.
+            pendingSeekTo = element.currentTime;
+            setQualityStepsDown((steps) => steps + 1);
+          });
+        }
+      }
 
       usePlayerStore.getState().setStatus('ready');
-      recordPlay(currentTrack);
+
+      /**
+       * Record the play ONCE per loaded track.
+       *
+       * `play` fires on every resume — including each recovery from rebuffering,
+       * which on a slow link is constant. `recordPlay` rebuilds the history array
+       * and Zustand's persist middleware then does a SYNCHRONOUS
+       * `localStorage.setItem` of up to 30 full song objects. Running that on
+       * every buffer recovery is what pegged the main thread and froze the UI.
+       */
+      if (recordedPlayForTrackId !== trackId) {
+        recordedPlayForTrackId = trackId;
+        recordPlay(currentTrack);
+      }
     });
 
     instance.on('end', () => {
@@ -474,11 +675,11 @@ export function usePlayerEngine(): void {
        * one plays fine. Previously any load failure ended playback with an error
        * and silence; now it walks down the ladder first.
        */
-      if (remainingFallbacks(currentTrack, qualityStepsDown) > 0) {
+      const lower = resolveStream(currentTrack, qualityPreference, qualityStepsDown + 1);
+      if (lower && stream && lower.index !== stream.index) {
         console.warn(
-          `[sur] "${currentTrack.title}" failed to load at ` +
-            `${currentTrack.downloadUrl[currentTrack.downloadUrl.length - 1 - qualityStepsDown]?.quality}; ` +
-            'retrying at a lower bitrate',
+          `[sur] "${currentTrack.title}" failed to load at ${stream.quality}; ` +
+            `retrying at ${lower.quality}`,
         );
         setQualityStepsDown((steps) => steps + 1);
         return;

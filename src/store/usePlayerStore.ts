@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { Song } from '@shared/types';
+import type { AudioQuality, Song } from '@shared/types';
 import { clamp, shuffled } from '@/lib/utils';
 
 /**
@@ -14,6 +14,15 @@ import { clamp, shuffled } from '@/lib/utils';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type PlaybackStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+/**
+ * Streaming quality the listener asked for.
+ *
+ * `auto` is the default and the reason this exists: a 320kbps track is 8–15 MB,
+ * which stutters badly on a slow connection. `auto` starts from a connection
+ * estimate and lets the engine downgrade further when it detects stalls.
+ */
+export type QualityPreference = 'auto' | '96kbps' | '160kbps' | '320kbps';
 
 interface PlayerState {
   queue: Song[];
@@ -41,6 +50,13 @@ interface PlayerState {
 
   status: PlaybackStatus;
   error: string | null;
+
+  /** What the listener chose. Persisted. */
+  qualityPreference: QualityPreference;
+  /** What is actually streaming right now, after auto-selection and downgrades. */
+  effectiveQuality: AudioQuality | null;
+  /** True while playback has been reduced below the requested quality. */
+  didAutoDowngrade: boolean;
 
   // ── intent ────────────────────────────────────────────────────────────────
   /** Replaces the queue with `songs` and starts at `startIndex`. */
@@ -71,6 +87,9 @@ interface PlayerState {
   setPosition: (position: number) => void;
   setDuration: (duration: number) => void;
   setStatus: (status: PlaybackStatus, error?: string | null) => void;
+
+  setQualityPreference: (preference: QualityPreference) => void;
+  reportQuality: (quality: AudioQuality | null, didAutoDowngrade: boolean) => void;
 }
 
 /** Current track derived from queue + index, rather than duplicated in state. */
@@ -84,6 +103,12 @@ export function selectHasNext(state: PlayerState): boolean {
 
 /** Position below which "previous" steps back instead of restarting (R3.2). */
 export const RESTART_THRESHOLD_SECONDS = 3;
+
+const QUALITY_PREFERENCES: readonly QualityPreference[] = ['auto', '96kbps', '160kbps', '320kbps'];
+
+function isQualityPreference(value: unknown): value is QualityPreference {
+  return typeof value === 'string' && QUALITY_PREFERENCES.includes(value as QualityPreference);
+}
 
 export const usePlayerStore = create<PlayerState>()(
   persist(
@@ -100,6 +125,9 @@ export const usePlayerStore = create<PlayerState>()(
       duration: 0,
       status: 'idle',
       error: null,
+      qualityPreference: 'auto',
+      effectiveQuality: null,
+      didAutoDowngrade: false,
 
       playQueue: (songs, startIndex = 0) => {
         if (songs.length === 0) return;
@@ -303,6 +331,14 @@ export const usePlayerStore = create<PlayerState>()(
       setPosition: (position) => set({ position }),
       setDuration: (duration) => set({ duration }),
       setStatus: (status, error = null) => set({ status, error }),
+
+      setQualityPreference: (qualityPreference) =>
+        // Clearing the downgrade flag matters: an explicit choice should not keep
+        // showing "reduced due to your connection" from a previous track.
+        set({ qualityPreference, didAutoDowngrade: false }),
+
+      reportQuality: (effectiveQuality, didAutoDowngrade) =>
+        set({ effectiveQuality, didAutoDowngrade }),
     }),
     {
       name: 'sur:player',
@@ -326,6 +362,7 @@ export const usePlayerStore = create<PlayerState>()(
         shuffle: state.shuffle,
         repeat: state.repeat,
         position: state.position,
+        qualityPreference: state.qualityPreference,
       }),
 
       /**
@@ -336,12 +373,22 @@ export const usePlayerStore = create<PlayerState>()(
        */
       merge: (persisted, current) => {
         const saved = persisted as Partial<PlayerState> | undefined;
-        if (!saved || !Array.isArray(saved.queue)) return current;
+        if (!saved) return current;
 
-        const queue = saved.queue.filter(
-          (song): song is Song =>
-            typeof song === 'object' && song !== null && typeof (song as Song).id === 'string',
-        );
+        /**
+         * Sanitize the queue rather than discarding EVERYTHING.
+         *
+         * This used to bail out and return defaults whenever `queue` was not an
+         * array, which threw away perfectly good settings alongside it — volume,
+         * repeat mode and the quality preference were all lost because of one bad
+         * field. Each field is now validated on its own.
+         */
+        const queue = Array.isArray(saved.queue)
+          ? saved.queue.filter(
+              (song): song is Song =>
+                typeof song === 'object' && song !== null && typeof (song as Song).id === 'string',
+            )
+          : [];
 
         return {
           ...current,
@@ -351,11 +398,17 @@ export const usePlayerStore = create<PlayerState>()(
           originalQueue: Array.isArray(saved.originalQueue) ? saved.originalQueue : null,
           volume: clamp(typeof saved.volume === 'number' ? saved.volume : 0.8, 0, 1),
           position: typeof saved.position === 'number' && saved.position >= 0 ? saved.position : 0,
+          qualityPreference: isQualityPreference(saved.qualityPreference)
+            ? saved.qualityPreference
+            : 'auto',
           // Always start paused and idle regardless of what was written.
           isPlaying: false,
           status: 'idle',
           error: null,
           duration: 0,
+          // Re-derived per track by the engine, never restored.
+          effectiveQuality: null,
+          didAutoDowngrade: false,
         };
       },
     },
